@@ -32,6 +32,7 @@
       const [students, setStudents] = useState([]);
       const [badges, setBadges] = useState([]);
       const [isLoading, setIsLoading] = useState(false);
+      const [isImageLoading, setIsImageLoading] = useState(false); // Isolated image processing state
       const [error, setError] = useState('');
 
       const [selectedStudent, setSelectedStudent] = useState('');
@@ -177,21 +178,18 @@
         // CATCH DISCARD/CANCEL EVENT
         if (!file) {
           setError("No image was received. Note: If you tapped the 'X' or back button in your camera app, it canceled the photo. Make sure to tap the checkmark (✔) or 'Done' button in your camera to successfully save and register the photo!");
-          setIsLoading(false);
-          setSubmitStatus('');
+          setIsImageLoading(false);
           return;
         }
 
-        setIsLoading(true);
+        setIsImageLoading(true);
         setError('');
-        setSubmitStatus('Optimizing image and registering file...');
 
         const reader = new FileReader();
         
         reader.onerror = () => {
           setError("Failed to read image file from your device. Please try taking the photo again.");
-          setIsLoading(false);
-          setSubmitStatus('');
+          setIsImageLoading(false);
         };
 
         reader.onload = (event) => {
@@ -200,8 +198,7 @@
             
             img.onerror = () => {
               setError("Device failed to render the image. Ensure the image is a valid format.");
-              setIsLoading(false);
-              setSubmitStatus('');
+              setIsImageLoading(false);
             };
 
             img.onload = () => {
@@ -222,19 +219,16 @@
                 }
 
                 setPhotoBase64(compressedBase64);
-                setIsLoading(false);
-                setSubmitStatus('');
+                setIsImageLoading(false);
               } catch (canvasErr) {
                 setError("Error compressing image layout: " + canvasErr.message);
-                setIsLoading(false);
-                setSubmitStatus('');
+                setIsImageLoading(false);
               }
             };
             img.src = event.target.result;
           } catch (readerErr) {
             setError("Error processing image reader stream: " + readerErr.message);
-            setIsLoading(false);
-            setSubmitStatus('');
+            setIsImageLoading(false);
           }
         };
         reader.readAsDataURL(file);
@@ -445,7 +439,13 @@
                 {/* Photo Element */}
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-slate-700">Photographic Evidence</label>
-                  {!photoBase64 ? (
+                  
+                  {isImageLoading ? (
+                    <div className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-blue-300 rounded-xl bg-blue-50">
+                      <Icon name="refresh-cw" className="animate-spin text-blue-600 mb-2" size={24} />
+                      <span className="text-sm font-medium text-blue-600 animate-pulse">Optimizing image and registering file...</span>
+                    </div>
+                  ) : !photoBase64 ? (
                     <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-xl bg-white hover:bg-slate-50 cursor-pointer">
                       <div className="flex flex-col items-center space-y-2 text-slate-400">
                         <Icon name="camera" size={32} />
@@ -456,6 +456,7 @@
                         accept="image/*" 
                         capture="environment" 
                         onChange={handleImageCapture} 
+                        onClick={(e) => { e.target.value = null; }} // Reset on click so cancel/reselect fires onChange reliably
                         className="hidden" 
                       />
                     </label>
