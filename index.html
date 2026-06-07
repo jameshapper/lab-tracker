@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Lab Tracker PWA</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -13,7 +13,7 @@
     body { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   </style>
 </head>
-<body class="bg-slate-50 font-sans antialiased">
+<body class="bg-slate-50 font-sans antialiased select-none">
 
   <div id="root"></div>
 
@@ -23,47 +23,7 @@
     function Icon({ name, size = 20, className = "" }) {
       useEffect(() => { if (window.lucide) { window.lucide.createIcons(); } }, [name]);
       return <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
-const SHEET_STUDENTS = 'Students';
-const SHEET_BADGES = 'Badges';
-const SHEET_EVIDENCE = 'Evidence';
-
-/**
- * FORCE AUTHORIZATION FUNCTION
- * * INSTRUCTIONS:
- * 1. Open this script in your Google Apps Script editor.
- * 2. In the toolbar at the top, select "triggerAuthorization" from the function dropdown.
- * 3. Click the "Run" button.
- * 4. This will force Google to show you the "Authorization Required" popup window!
- * 5. Grant all permissions (click Advanced -> Go to Untitled Project -> Allow).
- */
-function triggerAuthorization() {
-  Logger.log("Forcing Google Drive & Sheets permissions...");
-  try {
-    // Call DriveApp to trigger authorization dialog
-    const folders = DriveApp.getFoldersByName("Lab Tracker Evidence");
-    Logger.log("Drive Access Authorized successfully! Folders found: " + folders.hasNext());
-    
-    // Call SpreadsheetApp to verify sheets access
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    Logger.log("Spreadsheet Access Authorized successfully! Name: " + ss.getName());
-  } catch (e) {
-    Logger.log("Authorization trigger run failed: " + e.toString());
-  }
-}
-
-function doGet(e) {
-  try {
-    const action = e.parameter.action;
-    if (action === 'getStudents') {
-      return createJsonResponse({ status: 'success', data: getStudents() });
-    } else if (action === 'getBadges') {
-      return createJsonResponse({ status: 'success', data: getBadges() });
-    } else {
-      return HtmlService.createHtmlOutputFromFile('index')
-          .setTitle('Lab Tracker')
-          .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-          .addMetaTag('viewport', 'width=device-width, initial-scale=1');
-}
+    }
 
     function App() {
       const [scriptUrl, setScriptUrl] = useState('');
@@ -81,7 +41,7 @@ function doGet(e) {
       
       const [isRecording, setIsRecording] = useState(false);
       const [isSubmitting, setIsSubmitting] = useState(false);
-      const [submitStatus, setSubmitStatus] = useState(''); // Visual step tracker
+      const [submitStatus, setSubmitStatus] = useState(''); 
       const [successMessage, setSuccessMessage] = useState('');
       const [autoSelectAlert, setAutoSelectAlert] = useState('');
 
@@ -191,7 +151,10 @@ function doGet(e) {
 
           recognition.onstart = () => { setIsRecording(true); setError(''); };
           recognition.onend = () => setIsRecording(false);
-          recognition.onerror = (e) => { setIsRecording(false); setError(`Voice recognition issue: ${e.error}`); };
+          recognition.onerror = (e) => { 
+            setIsRecording(false); 
+            setError(`Voice recognition issue: ${e.error}. Check browser permissions.`); 
+          };
 
           recognition.onresult = (e) => {
             const resultText = e.results[0][0].transcript;
@@ -221,7 +184,6 @@ function doGet(e) {
           const img = new Image();
           img.onload = () => {
             const canvas = document.createElement('canvas');
-            // Moderate size (500px) keeps quality clear on Drive while avoiding POST timeout errors
             const MAX_WIDTH = 500; 
             const scaleSize = MAX_WIDTH / img.width;
             canvas.width = MAX_WIDTH;
@@ -230,7 +192,6 @@ function doGet(e) {
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             
-            // Highly optimized compression (50% quality JPEG)
             const compressedBase64 = canvas.toDataURL('image/jpeg', 0.5);
             setPhotoBase64(compressedBase64);
             setIsLoading(false);
@@ -281,7 +242,7 @@ function doGet(e) {
             throw new Error(result.message);
           }
         } catch (err) {
-          setError('Failed to submit entry: ' + err.message + ' (Make sure your Web App API deployment is authorized on your personal account).');
+          setError('Failed to submit entry: ' + err.message);
         } finally {
           setIsSubmitting(false);
           setSubmitStatus('');
@@ -320,61 +281,7 @@ function doGet(e) {
             </div>
           </div>
         );
-  } catch (error) {
-    return createJsonResponse({ status: 'error', message: error.toString() });
-  }
-}
-
-function getScriptUrl() {
-  return ScriptApp.getService().getUrl();
-}
-
-function doPost(e) {
-  try {
-    const payload = JSON.parse(e.postData.contents);
-    const action = payload.action;
-
-    if (action === 'postEvidence') {
-      const result = postEvidence(
-        payload.studentId, 
-        payload.badgeId, 
-        payload.voiceTranscript, 
-        payload.photoData // Receive image base64
-      );
-      return createJsonResponse({ status: 'success', data: result });
-    } else {
-      return createJsonResponse({ status: 'error', message: 'Invalid or missing action.' });
-    }
-  } catch (error) {
-    return createJsonResponse({ status: 'error', message: error.toString() });
-  }
-}
-
-function getStudents() { return getSheetDataAsObjects(SHEET_STUDENTS); }
-function getBadges() { return getSheetDataAsObjects(SHEET_BADGES); }
-
-/**
- * Appends data to sheet, saves image data to Google Drive, and links it.
- */
-function postEvidence(studentId, badgeId, voiceTranscript, photoData) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_EVIDENCE);
-  if (!sheet) throw new Error("The tab named '" + SHEET_EVIDENCE + "' was not found.");
-
-  const timestamp = new Date().toISOString();
-  const evidenceId = Utilities.getUuid();
-  let finalPhotoLink = "";
-
-  // If a photo was taken, save it to Google Drive and get the link
-  if (photoData && (photoData.indexOf("data:image") !== -1 || photoData.length > 100)) {
-    try {
-      // Find or create folder
-      let folder;
-      const folders = DriveApp.getFoldersByName("Lab Tracker Evidence");
-      if (folders.hasNext()) {
-        folder = folders.next();
-      } else {
-        folder = DriveApp.createFolder("Lab Tracker Evidence");
-}
+      }
 
       return (
         <div className="min-h-screen pb-20">
@@ -452,9 +359,6 @@ function postEvidence(studentId, badgeId, voiceTranscript, photoData) {
                     ))}
                   </select>
                 </div>
-      // Convert the Base64 Data URI into a file
-      let contentType = "image/jpeg";
-      let base64String = photoData;
 
                 {/* Badge Selector */}
                 <div className="space-y-2">
@@ -498,11 +402,6 @@ function postEvidence(studentId, badgeId, voiceTranscript, photoData) {
                     className="w-full bg-white border border-slate-300 rounded-xl p-3 outline-none shadow-sm focus:ring-2 focus:ring-blue-500"
                   ></textarea>
                 </div>
-      if (photoData.indexOf(",") !== -1) {
-        const splitData = photoData.split(",");
-        contentType = splitData[0].match(/:(.*?);/)[1];
-        base64String = splitData[1];
-      }
 
                 {/* Photo Element */}
                 <div className="space-y-2">
@@ -534,11 +433,6 @@ function postEvidence(studentId, badgeId, voiceTranscript, photoData) {
                     </div>
                   )}
                 </div>
-      const bytes = Utilities.base64Decode(base64String);
-      const cleanStudentId = studentId ? studentId.replace(/[^a-zA-Z0-9]/g, "_") : "Unknown";
-      const cleanBadgeId = badgeId ? badgeId.replace(/[^a-zA-Z0-9]/g, "_") : "Unknown";
-      const fileName = cleanStudentId + "-" + cleanBadgeId + "-" + Date.now() + ".jpg";
-      const blob = Utilities.newBlob(bytes, contentType, fileName);
 
                 {/* Submission CTA */}
                 <button 
@@ -565,50 +459,10 @@ function postEvidence(studentId, badgeId, voiceTranscript, photoData) {
           </main>
         </div>
       );
-      // Save file and set it so anyone with the link can view it
-      const file = folder.createFile(blob);
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      
-      finalPhotoLink = file.getUrl(); 
-    } catch (imageError) {
-      // Return error description in cell so we know exactly why Drive failed
-      finalPhotoLink = "Drive Upload Error: " + imageError.toString();
-}
+    }
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
 </body>
 </html>
-  } else {
-    finalPhotoLink = photoData ? "Photo Data Malformed or Empty" : "No Photo Attached";
-  }
-
-  // Appends: [ID, Timestamp, Student ID, Badge ID, Transcript, Clickable Photo Link]
-  sheet.appendRow([evidenceId, timestamp, studentId, badgeId, voiceTranscript, finalPhotoLink]);
-
-  return {
-    evidenceId: evidenceId,
-    timestamp: timestamp,
-    photoUrl: finalPhotoLink,
-    message: "Evidence successfully saved!"
-  };
-}
-
-function getSheetDataAsObjects(sheetName) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
-  if (!sheet) throw new Error("Tab '" + sheetName + "' not found.");
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
-  const headers = data[0];
-  const rows = data.slice(1);
-  return rows.map(row => {
-    let obj = {};
-    headers.forEach((header, index) => { obj[header] = row[index]; });
-    return obj;
-  });
-}
-
-function createJsonResponse(responseObject) {
-  return ContentService.createTextOutput(JSON.stringify(responseObject)).setMimeType(ContentService.MimeType.JSON);
-}
