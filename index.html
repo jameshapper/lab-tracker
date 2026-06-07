@@ -11,14 +11,6 @@
   <script src="https://unpkg.com/lucide@latest"></script>
   <style>
     body { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
-    /* Smooth transition for toast notifications */
-    .toast-slide {
-      animation: slideDown 0.3s ease-out forwards;
-    }
-    @keyframes slideDown {
-      from { transform: translateY(-100%); opacity: 0; }
-      to { transform: translateY(0); opacity: 1; }
-    }
   </style>
 </head>
 <body class="bg-slate-50 font-sans antialiased select-none">
@@ -42,18 +34,19 @@
       const [isLoading, setIsLoading] = useState(false);
       const [isImageLoading, setIsImageLoading] = useState(false); 
       
-      // Global Notification States (rendered as top-level floating toasts)
+      // Notification States
       const [error, setError] = useState('');
       const [successMessage, setSuccessMessage] = useState('');
       const [autoSelectAlert, setAutoSelectAlert] = useState('');
       const [submitStatus, setSubmitStatus] = useState(''); 
+      const [showVoiceTroubleshooter, setShowVoiceTroubleshooter] = useState(false);
 
       const [selectedStudent, setSelectedStudent] = useState('');
       const [selectedBadge, setSelectedBadge] = useState('');
       const [transcript, setTranscript] = useState('');
       const [photoBase64, setPhotoBase64] = useState('');
       
-      // Live system event logger state for hardware diagnostics
+      // Live system event logger state
       const [logs, setLogs] = useState([]);
       const [showConsole, setShowConsole] = useState(false);
 
@@ -88,20 +81,20 @@
         }
       }, []);
 
-      // Focus Listener to catch "X" Camera Cancel action on Android/Chrome
+      // Focus Listener to catch Camera Cancel action on Android/Chrome
       useEffect(() => {
         const handleWindowFocus = () => {
           if (isCameraActiveRef.current) {
-            logEvent("Window focused. Checking photo intake status...");
+            logEvent("Window refocused from camera intent. Checking photo intake...");
             isCameraActiveRef.current = false;
             
-            // Wait 800ms to allow file upload stream to process before declaring a cancel event
+            // Wait 1000ms to allow file upload stream to process before declaring a cancel event
             setTimeout(() => {
               if (!photoBase64 && !isImageLoading) {
-                logEvent("Verification failed: No image data was processed. Declaring cancel event.");
-                setError("Camera stream closed. If you took a photo, make sure to click the checkmark (✔) or 'Done' button in your camera app to send it back to the tracker!");
+                logEvent("Verification failed: No image data was processed. Triggering cancel notification.");
+                setError("Camera stream closed. If you took a photo, make sure to click the checkmark (✔) or 'Done' button in your camera app to successfully register it!");
               }
-            }, 800);
+            }, 1000);
           }
         };
 
@@ -176,12 +169,12 @@
         if (matchedStudent) { 
           setSelectedStudent(matchedStudent); 
           matchedDetails.push(matchedStudent);
-          logEvent(`Auto-selected student "${matchedStudent}" via smart voice parser.`);
+          logEvent(`Auto-selected student "${matchedStudent}" via voice parser.`);
         }
         if (matchedBadge) { 
           setSelectedBadge(matchedBadge); 
           matchedDetails.push(matchedBadge);
-          logEvent(`Auto-selected badge "${matchedBadge}" via smart voice parser.`);
+          logEvent(`Auto-selected badge "${matchedBadge}" via voice parser.`);
         }
 
         if (matchedDetails.length > 0) {
@@ -193,7 +186,7 @@
       const toggleRecording = () => {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-          setError("Voice speech recognition is not supported in this browser profile.");
+          setError("Speech recognition is not supported in this browser profile.");
           logEvent("Speech Recognition initialization failed: API unsupported.");
           return;
         }
@@ -214,6 +207,7 @@
           recognition.onstart = () => { 
             setIsRecording(true); 
             setError('');
+            setShowVoiceTroubleshooter(false);
             logEvent("Mic active: Listening...");
           };
           recognition.onend = () => {
@@ -222,8 +216,13 @@
           };
           recognition.onerror = (e) => { 
             setIsRecording(false); 
-            setError(`Voice recognition issue: ${e.error}`);
             logEvent(`Speech Engine Error: ${e.error}`);
+            if (e.error === 'not-allowed') {
+              setError("Voice recognition issue: Microphone not allowed. Tap below for help.");
+              setShowVoiceTroubleshooter(true);
+            } else {
+              setError(`Voice recognition issue: ${e.error}`);
+            }
           };
 
           recognition.onresult = (e) => {
@@ -250,7 +249,6 @@
         
         if (!file) {
           logEvent("Camera closure caught with zero file payload.");
-          // Handled by focus listener
           return;
         }
 
@@ -405,54 +403,6 @@
 
       return (
         <div className="min-h-screen pb-32 relative">
-          
-          {/* FLOATING TOP TOAST NOTIFICATIONS (Guaranteed Viewport Catch) */}
-          <div className="fixed top-0 left-0 right-0 z-50 p-4 space-y-3 pointer-events-none">
-            {error && (
-              <div className="max-w-md mx-auto bg-red-600 text-white p-4 rounded-xl shadow-2xl flex items-start justify-between gap-3 toast-slide pointer-events-auto">
-                <div className="flex items-start gap-2">
-                  <Icon name="alert-circle" className="text-white mt-0.5 flex-shrink-0" />
-                  <div className="text-sm">
-                    <p className="font-bold">Notice</p>
-                    <p className="font-medium leading-relaxed">{error}</p>
-                  </div>
-                </div>
-                <button onClick={() => setError('')} className="text-white hover:text-red-200 p-0.5"><Icon name="x" size={18} /></button>
-              </div>
-            )}
-
-            {successMessage && (
-              <div className="max-w-md mx-auto bg-green-600 text-white p-4 rounded-xl shadow-2xl flex items-start justify-between gap-3 toast-slide pointer-events-auto">
-                <div className="flex items-start gap-2">
-                  <Icon name="check-circle-2" className="text-white mt-0.5 flex-shrink-0" />
-                  <div className="text-sm">
-                    <p className="font-bold">Success</p>
-                    <p className="font-medium">{successMessage}</p>
-                  </div>
-                </div>
-                <button onClick={() => setSuccessMessage('')} className="text-white hover:text-green-200 p-0.5"><Icon name="x" size={18} /></button>
-              </div>
-            )}
-
-            {submitStatus && (
-              <div className="max-w-md mx-auto bg-blue-600 text-white p-4 rounded-xl shadow-2xl flex items-start gap-2 toast-slide pointer-events-auto">
-                <Icon name="refresh-cw" className="animate-spin text-white mt-0.5 flex-shrink-0" />
-                <div className="text-sm font-semibold">
-                  {submitStatus}
-                </div>
-              </div>
-            )}
-
-            {autoSelectAlert && (
-              <div className="max-w-md mx-auto bg-indigo-600 text-white p-4 rounded-xl shadow-2xl flex items-start justify-between gap-3 toast-slide pointer-events-auto">
-                <div className="flex items-start gap-2">
-                  <Icon name="sparkles" className="text-white mt-0.5 flex-shrink-0" />
-                  <div className="text-sm font-bold leading-tight">{autoSelectAlert}</div>
-                </div>
-                <button onClick={() => setAutoSelectAlert('')} className="text-white hover:text-indigo-200 p-0.5"><Icon name="x" size={18} /></button>
-              </div>
-            )}
-          </div>
 
           <header className="bg-blue-600 text-white p-4 shadow-md flex justify-between items-center sticky top-0 z-10">
             <h1 className="text-xl font-bold flex items-center gap-2">
@@ -471,6 +421,17 @@
 
           <main className="max-w-lg mx-auto p-4 space-y-6 mt-2">
             
+            {/* FLOATING TOP TOAST NOTIFICATIONS FOR SMART VOICE AUTO-SELECT */}
+            {autoSelectAlert && (
+              <div className="bg-indigo-600 text-white p-4 rounded-xl shadow-lg flex items-start justify-between gap-3 animate-bounce">
+                <div className="flex items-start gap-2">
+                  <Icon name="sparkles" className="text-white mt-0.5 flex-shrink-0" />
+                  <div className="text-sm font-bold leading-tight">{autoSelectAlert}</div>
+                </div>
+                <button onClick={() => setAutoSelectAlert('')} className="text-white hover:text-indigo-200 p-0.5"><Icon name="x" size={18} /></button>
+              </div>
+            )}
+
             {isLoading ? (
               <div className="flex flex-col items-center justify-center py-12 space-y-4 text-slate-500">
                 <Icon name="refresh-cw" className="animate-spin text-blue-600" size={32} />
@@ -541,6 +502,25 @@
                   ></textarea>
                 </div>
 
+                {/* VOICE TROUBLESHOOTER HELP PANEL */}
+                {showVoiceTroubleshooter && (
+                  <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 space-y-3">
+                    <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
+                      <Icon name="help-circle" />
+                      <span>How to Unblock Voice Recognition on Android:</span>
+                    </div>
+                    <ol className="list-decimal list-inside text-xs text-amber-700 space-y-1.5 font-medium leading-relaxed">
+                      <li>Tap the <strong>tune/settings icon</strong> (left of the website URL in the address bar).</li>
+                      <li>Select <strong>Permissions</strong> or <strong>Site Settings</strong>.</li>
+                      <li>Find <strong>Microphone</strong> and toggle it to <strong>Allow</strong>.</li>
+                      <li>Refresh this browser page and tap <strong>Dictate</strong> again!</li>
+                    </ol>
+                    <p className="text-[10px] text-slate-500">
+                      * If you opened this link from inside another app (like Gmail or Discord), tap the 3-dots icon at the top-right and select <strong>"Open in Chrome"</strong> first.
+                    </p>
+                  </div>
+                )}
+
                 {/* Photo Element */}
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-slate-700">Photographic Evidence</label>
@@ -570,6 +550,10 @@
                     </label>
                   ) : (
                     <div className="space-y-3">
+                      <div className="bg-green-100 border border-green-300 text-green-800 text-sm font-bold px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm animate-pulse">
+                        <Icon name="check-circle" className="text-green-600" />
+                        <span>Photo Registered & Optimized successfully! ✅</span>
+                      </div>
                       <div className="relative rounded-xl overflow-hidden shadow-md border">
                         <img src={photoBase64} alt="Preview" className="w-full h-auto object-cover" />
                         <button 
@@ -582,6 +566,38 @@
                         >
                           Retake
                         </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* SOLID INLINE INSTRUCTIONS / NOTIFICATIONS */}
+                <div className="space-y-3">
+                  {error && (
+                    <div className="bg-red-50 border-2 border-red-500 rounded-xl p-4 text-red-800 flex items-start gap-3 shadow-md">
+                      <Icon name="alert-circle" className="text-red-600 mt-0.5 flex-shrink-0" />
+                      <div className="text-sm font-semibold">
+                        <p className="font-bold">Device Notification:</p>
+                        <p>{error}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {successMessage && (
+                    <div className="bg-green-50 border-2 border-green-500 rounded-xl p-4 text-green-800 flex items-start gap-3 shadow-md">
+                      <Icon name="check-circle-2" className="text-green-600 mt-0.5 flex-shrink-0" />
+                      <div className="text-sm font-semibold">
+                        <p className="font-bold">Transaction Success:</p>
+                        <p>{successMessage}</p>
+                      </div>
+                    </div>
+                  )}
+
+                  {submitStatus && (
+                    <div className="bg-blue-50 border-2 border-blue-500 rounded-xl p-4 text-blue-800 flex items-start gap-3 shadow-md animate-pulse">
+                      <Icon name="refresh-cw" className="animate-spin text-blue-500 mt-0.5 flex-shrink-0" />
+                      <div className="text-sm font-bold">
+                        <p>{submitStatus}</p>
                       </div>
                     </div>
                   )}
@@ -632,7 +648,7 @@
                   logs.map((log, index) => {
                     let color = "text-slate-400";
                     if (log.includes("Error") || log.includes("Exception") || log.includes("failed")) color = "text-red-400";
-                    else if (log.includes("successfully") || log.includes("verified") || log.includes("complete")) color = "text-green-400";
+                    else if (log.includes("successfully") || log.includes("verified") || log.includes("complete") || log.includes("Registered")) color = "text-green-400";
                     else if (log.includes("Auto-selected") || log.includes("Match")) color = "text-indigo-400";
                     return <p key={index} className={color}>{log}</p>;
                   })
