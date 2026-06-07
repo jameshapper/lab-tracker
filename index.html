@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lab Tracker PWA</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React & ReactDOM CDNs -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <!-- Babel CDN to compile JSX dynamically in the browser -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    /* UI tweaks to prevent standard mobile browser quirks and rubber-banding */
+    body {
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 font-sans antialiased">
+
+  <div id="root"></div>
+
+  <!-- Note: We use type="text/babel" so Babel compiles our React/JSX code dynamically inside Apps Script -->
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // Helper component to render Lucide Icons properly in dynamically compiled React
+    function Icon({ name, size = 20, className = "" }) {
+      useEffect(() => {
+        if (window.lucide) {
+          window.lucide.createIcons();
+        }
+      }, [name]);
+      return <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
+    }
+
+    function App() {
+      const [scriptUrl, setScriptUrl] = useState('');
+      const [isConfigured, setIsConfigured] = useState(false);
+      
+      // Database states
+      const [students, setStudents] = useState([]);
+      const [badges, setBadges] = useState([]);
+      const [isLoading, setIsLoading] = useState(false);
+      const [error, setError] = useState('');
+
+      // Form input states
+      const [selectedStudent, setSelectedStudent] = useState('');
+      const [selectedBadge, setSelectedBadge] = useState('');
+      const [transcript, setTranscript] = useState('');
+      const [photoBase64, setPhotoBase64] = useState('');
+      
+      // UI action states
+      const [isRecording, setIsRecording] = useState(false);
+      const [isSubmitting, setIsSubmitting] = useState(false);
+      const [successMessage, setSuccessMessage] = useState('');
+      const [autoSelectAlert, setAutoSelectAlert] = useState('');
+
+      const recognitionRef = useRef(null);
+
+      // Automatically find the Apps Script Web App execution URL when running inside the Google iframe
+      useEffect(() => {
+        if (typeof google !== 'undefined' && google.script && google.script.run) {
+          google.script.run.withSuccessHandler((url) => {
+            setScriptUrl(url);
+            setIsConfigured(true);
+          }).getScriptUrl();
+        } else {
+          // If running locally, fetch from local storage configuration
+          const localUrl = localStorage.getItem('labTrackerUrl') || '';
+          setScriptUrl(localUrl);
+          setIsConfigured(!!localUrl);
+        }
+      }, []);
+
+      // Pull current spreadsheet rosters once connected
+      useEffect(() => {
+        if (isConfigured && scriptUrl) {
+          fetchData();
+        }
+      }, [isConfigured, scriptUrl]);
+
+      const fetchData = async () => {
+        setIsLoading(true);
+        setError('');
+        try {
+          // Fetch Student names
+          const stuRes = await fetch(`${scriptUrl}?action=getStudents`);
+          const stuData = await stuRes.json();
+          if (stuData.status === 'success') {
+            setStudents(stuData.data.length > 0 ? stuData.data : [{ 'Name': 'Add Students to Sheet' }]);
+          } else { 
+            throw new Error(stuData.message); 
+          }
+
+          // Fetch Badge lists
+          const badgeRes = await fetch(`${scriptUrl}?action=getBadges`);
+          const badgeData = await badgeRes.json();
+          if (badgeData.status === 'success') {
+            setBadges(badgeData.data.length > 0 ? badgeData.data : [{ 'Badge Name': 'Add Badges to Sheet' }]);
+          } else { 
+            throw new Error(badgeData.message); 
+          }
+        } catch (err) {
+          setError('Failed to download active lists. Please check that your sheet tabs are exactly named "Students" and "Badges".');
+          console.error(err);
+        } finally {
+          setIsLoading(false);
+        }
+      };
+
+      // Smart Voice Matching: Scans the spoken dictation transcript for names and keywords
+      const autoParseTranscript = (text) => {
+        if (!text) return;
+        const lowercaseText = text.toLowerCase();
+        let matchedStudent = null;
+        let matchedBadge = null;
+        let matchedDetails = [];
+
+        // 1. Scan for Student Name
+        students.forEach(student => {
+          const sName = student.Name || student['Student Name'] || '';
+          if (!sName || sName.startsWith('Add Students')) return;
+
+          const sNameLower = sName.toLowerCase();
+          const firstName = sNameLower.split(' ')[0];
+
+          if (lowercaseText.includes(sNameLower)) {
+            matchedStudent = sName;
+          } else if (firstName && firstName.length > 2 && lowercaseText.includes(firstName)) {
+            matchedStudent = sName; // Smart fallback to first name match
+          }
+        });
+
+        // 2. Scan for Badge / Skill Name
+        badges.forEach(badge => {
+          const bName = badge['Badge Name'] || badge.Name || '';
+          if (!bName || bName.startsWith('Add Badges')) return;
+
+          const bNameLower = bName.toLowerCase();
+          if (lowercaseText.includes(bNameLower)) {
+            matchedBadge = bName;
+          } else {
+            // Check individual keywords (e.g. "multimeter", "oscilloscope", "laser")
+            const keywords = bNameLower.split(/[\s/]+/);
+            keywords.forEach(word => {
+              if (word.length > 4 && lowercaseText.includes(word)) {
+                matchedBadge = bName;
+              }
+            });
+          }
+        });
+
+        // 3. Update selectors and trigger alert if matched
+        if (matchedStudent) {
+          setSelectedStudent(matchedStudent);
+          matchedDetails.push(`Student: ${matchedStudent}`);
+        }
+        if (matchedBadge) {
+          setSelectedBadge(matchedBadge);
+          matchedDetails.push(`Badge: ${matchedBadge}`);
+        }
+
+        if (matchedDetails.length > 0) {
+          setAutoSelectAlert(`Voice Match Found! 🪄 ${matchedDetails.join(' | ')}`);
+          setTimeout(() => setAutoSelectAlert(''), 4500);
+        }
+      };
+
+      // Dictation toggle utilizing modern browser Speech Recognition APIs
+      const toggleRecording = () => {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+          setError("Voice speech recognition is not supported in this browser profile.");
+          return;
+        }
+
+        if (isRecording) {
+          if (recognitionRef.current) {
+            recognitionRef.current.stop();
+          }
+          setIsRecording(false);
+          return;
+        }
+
+        try {
+          const recognition = new SpeechRecognition();
+          recognition.continuous = false;
+          recognition.interimResults = false;
+          recognition.lang = 'en-US';
+
+          recognition.onstart = () => {
+            setIsRecording(true);
+            setError('');
+          };
+
+          recognition.onend = () => {
+            setIsRecording(false);
+          };
+
+          recognition.onerror = (e) => {
+            setIsRecording(false);
+            setError(`Voice recognition issue: ${e.error}`);
+            console.error(e);
+          };
+
+          recognition.onresult = (e) => {
+            const resultText = e.results[0][0].transcript;
+            setTranscript(prev => {
+              const updated = prev ? prev + ' ' + resultText : resultText;
+              autoParseTranscript(updated); // Parse immediately on result
+              return updated;
+            });
+          };
+
+          recognitionRef.current = recognition;
+          recognition.start();
+        } catch (e) {
+          setIsRecording(false);
+          setError("Could not launch microphone module.");
+        }
+      };
+
+      // Image processing before uploading
+      const handleImageCapture = (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        setIsLoading(true);
+        const reader = new FileReader();
+        reader.onload = (event) => {
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            // 800px width maintains excellent high-resolution detail on Google Drive
+            const MAX_WIDTH = 800; 
+            const scaleSize = MAX_WIDTH / img.width;
+            canvas.width = MAX_WIDTH;
+            canvas.height = img.height * scaleSize;
+            
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            
+            // Highly detailed compression ratio (75% quality JPEG)
+            const compressedBase64 = canvas.toDataURL('image/jpeg', 0.75);
+            setPhotoBase64(compressedBase64);
+            setIsLoading(false);
+          };
+          img.src = event.target.result;
+        };
+        reader.readAsDataURL(file);
+      };
+
+      const handleSubmit = async (e) => {
+        e.preventDefault();
+        if (!selectedStudent || !selectedBadge) {
+          setError('Please select both a student and a badge.');
+          return;
+        }
+
+        setIsSubmitting(true);
+        setError('');
+        
+        const payload = {
+          action: 'postEvidence',
+          studentId: selectedStudent,
+          badgeId: selectedBadge,
+          voiceTranscript: transcript,
+          photoData: photoBase64 // Passes raw base64 data for Apps Script file creation
+        };
+
+        try {
+          const response = await fetch(scriptUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(payload)
+          });
+          
+          const result = await response.json();
+          if (result.status === 'success') {
+            setSuccessMessage('Logged successfully! Image saved to Google Drive.');
+            setSelectedStudent('');
+            setSelectedBadge('');
+            setTranscript('');
+            setPhotoBase64('');
+            setTimeout(() => setSuccessMessage(''), 3000);
+          } else {
+            throw new Error(result.message);
+          }
+        } catch (err) {
+          setError('Failed to submit entry: ' + err.message);
+        } finally {
+          setIsSubmitting(false);
+        }
+      };
+
+      // Configuration Setup View (fallback outside the direct Apps Script URL)
+      if (!isConfigured) {
+        return (
+          <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center p-6">
+            <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 space-y-4">
+              <div className="flex justify-center text-blue-600">
+                <Icon name="settings" size={48} />
+              </div>
+              <h1 className="text-xl font-bold text-center text-slate-800">Lab Tracker Configuration</h1>
+              <p className="text-slate-500 text-center text-sm">
+                If you are running the PWA locally, please input your deployed Apps Script URL:
+              </p>
+              <form 
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const val = e.target.elements.url.value.trim();
+                  if (val) {
+                    localStorage.setItem('labTrackerUrl', val);
+                    setScriptUrl(val);
+                    setIsConfigured(true);
+                  }
+                }} 
+                className="space-y-4"
+              >
+                <input 
+                  type="url" 
+                  name="url" 
+                  required 
+                  placeholder="https://script.google.com/macros/s/..." 
+                  className="w-full px-4 py-3 border border-slate-300 rounded-xl outline-none" 
+                />
+                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition">
+                  Connect Web App API
+                </button>
+              </form>
+            </div>
+          </div>
+        );
+      }
+
+      // Live Mobile-First Interface
+      return (
+        <div className="min-h-screen pb-20">
+          <header className="bg-blue-600 text-white p-4 shadow-md flex justify-between items-center sticky top-0 z-10">
+            <h1 className="text-xl font-bold flex items-center gap-2">
+              <Icon name="award" size={24} /> Lab Tracker
+            </h1>
+            <button 
+              onClick={() => { 
+                localStorage.removeItem('labTrackerUrl'); 
+                setIsConfigured(false); 
+              }} 
+              className="text-xs bg-blue-700 hover:bg-blue-800 px-3 py-1.5 rounded-full font-semibold transition"
+            >
+              Configure API
+            </button>
+          </header>
+
+          <main className="max-w-lg mx-auto p-4 space-y-6 mt-2">
+            
+            {/* Action Response Popups */}
+            {error && (
+              <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-md text-red-700 flex items-center gap-2">
+                <Icon name="alert-circle" className="text-red-500" />
+                <p className="text-sm font-medium">{error}</p>
+              </div>
+            )}
+            
+            {successMessage && (
+              <div className="bg-green-50 border-l-4 border-green-500 p-4 rounded-md text-green-700 flex items-center gap-2">
+                <Icon name="check-circle-2" className="text-green-500" />
+                <p className="text-sm font-medium">{successMessage}</p>
+              </div>
+            )}
+
+            {autoSelectAlert && (
+              <div className="bg-indigo-50 border-l-4 border-indigo-500 p-4 rounded-md text-indigo-700 flex items-center gap-2 animate-bounce">
+                <Icon name="sparkles" className="text-indigo-500" />
+                <p className="text-sm font-bold">{autoSelectAlert}</p>
+              </div>
+            )}
+
+            {isLoading ? (
+              <div className="flex flex-col items-center justify-center py-12 space-y-4 text-slate-500">
+                <Icon name="refresh-cw" className="animate-spin text-blue-600" size={32} />
+                <p className="text-sm font-medium">Syncing / Compressing Image...</p>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmit} className="space-y-6">
+                
+                {/* Student Selector */}
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                    <Icon name="user" size={16} /> <span>Select Student</span>
+                  </label>
+                  <select 
+                    value={selectedStudent} 
+                    onChange={(e) => setSelectedStudent(e.target.value)} 
+                    className="w-full bg-white border border-slate-300 rounded-xl p-3 text-lg outline-none shadow-sm focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">-- Choose a student --</option>
+                    {students.map((s, i) => (
+                      <option key={i} value={s.Name || s['Student Name'] || JSON.stringify(s)}>
+                        {s.Name || s['Student Name'] || `Row ${i+1}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Badge Selector */}
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                    <Icon name="award" size={16} /> <span>Select Skill/Badge</span>
+                  </label>
+                  <select 
+                    value={selectedBadge} 
+                    onChange={(e) => setSelectedBadge(e.target.value)} 
+                    className="w-full bg-white border border-slate-300 rounded-xl p-3 text-lg outline-none shadow-sm focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">-- Choose a badge --</option>
+                    {badges.map((b, i) => (
+                      <option key={i} value={b['Badge Name'] || b.Name || JSON.stringify(b)}>
+                        {b['Badge Name'] || b.Name || `Row ${i+1}`}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Dictation Segment */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-end">
+                    <label className="text-sm font-bold text-slate-700">Observation Notes</label>
+                    <button 
+                      type="button" 
+                      onClick={toggleRecording} 
+                      className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-sm font-semibold transition ${
+                        isRecording ? 'bg-red-100 text-red-600 animate-pulse' : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                      }`}
+                    >
+                      <Icon name="mic" size={16} />
+                      <span>{isRecording ? 'Recording...' : 'Dictate'}</span>
+                    </button>
+                  </div>
+                  <textarea 
+                    value={transcript} 
+                    onChange={(e) => setTranscript(e.target.value)} 
+                    placeholder="Type or dictate what you observed..." 
+                    rows="4" 
+                    className="w-full bg-white border border-slate-300 rounded-xl p-3 outline-none shadow-sm focus:ring-2 focus:ring-blue-500"
+                  ></textarea>
+                </div>
+
+                {/* Photo Element */}
+                <div className="space-y-2">
+                  <label className="text-sm font-bold text-slate-700">Photographic Evidence</label>
+                  {!photoBase64 ? (
+                    <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-xl bg-white hover:bg-slate-50 cursor-pointer">
+                      <div className="flex flex-col items-center space-y-2 text-slate-400">
+                        <Icon name="camera" size={32} />
+                        <span className="font-semibold text-sm">Tap to Snap Photo</span>
+                      </div>
+                      <input 
+                        type="file" 
+                        accept="image/*" 
+                        capture="environment" 
+                        onChange={handleImageCapture} 
+                        className="hidden" 
+                      />
+                    </label>
+                  ) : (
+                    <div className="relative rounded-xl overflow-hidden shadow-md border">
+                      <img src={photoBase64} alt="Preview" className="w-full h-auto object-cover" />
+                      <button 
+                        type="button" 
+                        onClick={() => setPhotoBase64('')} 
+                        className="absolute top-2 right-2 bg-slate-900/80 text-white px-3 py-1 rounded-full text-sm font-semibold backdrop-blur-sm"
+                      >
+                        Retake
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Submission CTA */}
+                <button 
+                  type="submit" 
+                  disabled={isSubmitting} 
+                  className={`w-full flex items-center justify-center gap-2 text-white font-bold text-lg py-4 rounded-xl shadow-md transition active:scale-95 ${
+                    isSubmitting ? 'bg-slate-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
+                  }`}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Icon name="refresh-cw" className="animate-spin" size={24} />
+                      <span>Uploading to Drive Folder...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Icon name="send" size={24} />
+                      <span>Submit Evidence</span>
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
+          </main>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
