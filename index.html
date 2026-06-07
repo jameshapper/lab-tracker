@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lab Tracker PWA</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
@@ -13,7 +13,7 @@
     body { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   </style>
 </head>
-<body class="bg-slate-50 font-sans antialiased select-none">
+<body class="bg-slate-50 font-sans antialiased">
 
   <div id="root"></div>
 
@@ -23,7 +23,47 @@
     function Icon({ name, size = 20, className = "" }) {
       useEffect(() => { if (window.lucide) { window.lucide.createIcons(); } }, [name]);
       return <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
-    }
+const SHEET_STUDENTS = 'Students';
+const SHEET_BADGES = 'Badges';
+const SHEET_EVIDENCE = 'Evidence';
+
+/**
+ * FORCE AUTHORIZATION FUNCTION
+ * * INSTRUCTIONS:
+ * 1. Open this script in your Google Apps Script editor.
+ * 2. In the toolbar at the top, select "triggerAuthorization" from the function dropdown.
+ * 3. Click the "Run" button.
+ * 4. This will force Google to show you the "Authorization Required" popup window!
+ * 5. Grant all permissions (click Advanced -> Go to Untitled Project -> Allow).
+ */
+function triggerAuthorization() {
+  Logger.log("Forcing Google Drive & Sheets permissions...");
+  try {
+    // Call DriveApp to trigger authorization dialog
+    const folders = DriveApp.getFoldersByName("Lab Tracker Evidence");
+    Logger.log("Drive Access Authorized successfully! Folders found: " + folders.hasNext());
+    
+    // Call SpreadsheetApp to verify sheets access
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    Logger.log("Spreadsheet Access Authorized successfully! Name: " + ss.getName());
+  } catch (e) {
+    Logger.log("Authorization trigger run failed: " + e.toString());
+  }
+}
+
+function doGet(e) {
+  try {
+    const action = e.parameter.action;
+    if (action === 'getStudents') {
+      return createJsonResponse({ status: 'success', data: getStudents() });
+    } else if (action === 'getBadges') {
+      return createJsonResponse({ status: 'success', data: getBadges() });
+    } else {
+      return HtmlService.createHtmlOutputFromFile('index')
+          .setTitle('Lab Tracker')
+          .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+          .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
 
     function App() {
       const [scriptUrl, setScriptUrl] = useState('');
@@ -32,99 +72,54 @@
       const [students, setStudents] = useState([]);
       const [badges, setBadges] = useState([]);
       const [isLoading, setIsLoading] = useState(false);
-      const [isImageLoading, setIsImageLoading] = useState(false); 
-      
-      // Notification States
       const [error, setError] = useState('');
-      const [successMessage, setSuccessMessage] = useState('');
-      const [autoSelectAlert, setAutoSelectAlert] = useState('');
-      const [submitStatus, setSubmitStatus] = useState(''); 
-      const [showVoiceTroubleshooter, setShowVoiceTroubleshooter] = useState(false);
 
       const [selectedStudent, setSelectedStudent] = useState('');
       const [selectedBadge, setSelectedBadge] = useState('');
       const [transcript, setTranscript] = useState('');
       const [photoBase64, setPhotoBase64] = useState('');
       
-      // Live system event logger state
-      const [logs, setLogs] = useState([]);
-      const [showConsole, setShowConsole] = useState(false);
+      const [isRecording, setIsRecording] = useState(false);
+      const [isSubmitting, setIsSubmitting] = useState(false);
+      const [submitStatus, setSubmitStatus] = useState(''); // Visual step tracker
+      const [successMessage, setSuccessMessage] = useState('');
+      const [autoSelectAlert, setAutoSelectAlert] = useState('');
 
       const recognitionRef = useRef(null);
-      const isCameraActiveRef = useRef(false);
 
-      // Log helper
-      const logEvent = (msg) => {
-        const timestamp = new Date().toLocaleTimeString();
-        setLogs(prev => [`[${timestamp}] ${msg}`, ...prev.slice(0, 49)]);
-        console.log(`[PWA Log] ${msg}`);
-      };
-
-      // Auto-detect script location
       useEffect(() => {
-        logEvent("PWA Initializing...");
         if (typeof google !== 'undefined' && google.script && google.script.run) {
           google.script.run.withSuccessHandler((url) => {
             setScriptUrl(url);
             setIsConfigured(true);
-            logEvent(`Connected via Apps Script Web App context.`);
           }).getScriptUrl();
         } else {
           const localUrl = localStorage.getItem('labTrackerUrl') || '';
           setScriptUrl(localUrl);
           setIsConfigured(!!localUrl);
-          if (localUrl) {
-            logEvent(`Connected via saved local API URL.`);
-          } else {
-            logEvent(`No API URL configured. Redirected to setup view.`);
-          }
         }
       }, []);
-
-      // Focus Listener to catch Camera Cancel action on Android/Chrome
-      useEffect(() => {
-        const handleWindowFocus = () => {
-          if (isCameraActiveRef.current) {
-            logEvent("Window refocused from camera intent. Checking photo intake...");
-            isCameraActiveRef.current = false;
-            
-            // Wait 1000ms to allow file upload stream to process before declaring a cancel event
-            setTimeout(() => {
-              if (!photoBase64 && !isImageLoading) {
-                logEvent("Verification failed: No image data was processed. Triggering cancel notification.");
-                setError("Camera stream closed. If you took a photo, make sure to click the checkmark (✔) or 'Done' button in your camera app to successfully register it!");
-              }
-            }, 1000);
-          }
-        };
-
-        window.addEventListener('focus', handleWindowFocus);
-        return () => window.removeEventListener('focus', handleWindowFocus);
-      }, [photoBase64, isImageLoading]);
 
       useEffect(() => { if (isConfigured && scriptUrl) { fetchData(); } }, [isConfigured, scriptUrl]);
 
       const fetchData = async () => {
         setIsLoading(true);
         setError('');
-        logEvent("Syncing student rosters and badge criteria lists...");
         try {
           const stuRes = await fetch(`${scriptUrl}?action=getStudents`);
           const stuData = await stuRes.json();
           if (stuData.status === 'success') {
             setStudents(stuData.data.length > 0 ? stuData.data : [{ 'Name': 'Add Students to Sheet' }]);
-            logEvent(`Loaded ${stuData.data.length} students successfully.`);
           } else { throw new Error(stuData.message); }
 
           const badgeRes = await fetch(`${scriptUrl}?action=getBadges`);
           const badgeData = await badgeRes.json();
           if (badgeData.status === 'success') {
             setBadges(badgeData.data.length > 0 ? badgeData.data : [{ 'Badge Name': 'Add Badges to Sheet' }]);
-            logEvent(`Loaded ${badgeData.data.length} badges successfully.`);
           } else { throw new Error(badgeData.message); }
         } catch (err) {
-          setError('Failed to download active rosters. Please verify your sheets connection.');
-          logEvent(`Database Load Error: ${err.message}`);
+          setError('Failed to download active lists. Please check your setup.');
+          console.error(err);
         } finally {
           setIsLoading(false);
         }
@@ -166,16 +161,8 @@
           }
         });
 
-        if (matchedStudent) { 
-          setSelectedStudent(matchedStudent); 
-          matchedDetails.push(matchedStudent);
-          logEvent(`Auto-selected student "${matchedStudent}" via voice parser.`);
-        }
-        if (matchedBadge) { 
-          setSelectedBadge(matchedBadge); 
-          matchedDetails.push(matchedBadge);
-          logEvent(`Auto-selected badge "${matchedBadge}" via voice parser.`);
-        }
+        if (matchedStudent) { setSelectedStudent(matchedStudent); matchedDetails.push(matchedStudent); }
+        if (matchedBadge) { setSelectedBadge(matchedBadge); matchedDetails.push(matchedBadge); }
 
         if (matchedDetails.length > 0) {
           setAutoSelectAlert(`Voice Match Found! 🪄 Found: ${matchedDetails.join(' | ')}`);
@@ -186,15 +173,13 @@
       const toggleRecording = () => {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-          setError("Speech recognition is not supported in this browser profile.");
-          logEvent("Speech Recognition initialization failed: API unsupported.");
+          setError("Voice speech recognition is not supported in this browser profile.");
           return;
         }
 
         if (isRecording) {
           if (recognitionRef.current) { recognitionRef.current.stop(); }
           setIsRecording(false);
-          logEvent("Stopped voice dictation session.");
           return;
         }
 
@@ -204,30 +189,12 @@
           recognition.interimResults = false;
           recognition.lang = 'en-US';
 
-          recognition.onstart = () => { 
-            setIsRecording(true); 
-            setError('');
-            setShowVoiceTroubleshooter(false);
-            logEvent("Mic active: Listening...");
-          };
-          recognition.onend = () => {
-            setIsRecording(false);
-            logEvent("Mic closed.");
-          };
-          recognition.onerror = (e) => { 
-            setIsRecording(false); 
-            logEvent(`Speech Engine Error: ${e.error}`);
-            if (e.error === 'not-allowed') {
-              setError("Voice recognition issue: Microphone not allowed. Tap below for help.");
-              setShowVoiceTroubleshooter(true);
-            } else {
-              setError(`Voice recognition issue: ${e.error}`);
-            }
-          };
+          recognition.onstart = () => { setIsRecording(true); setError(''); };
+          recognition.onend = () => setIsRecording(false);
+          recognition.onerror = (e) => { setIsRecording(false); setError(`Voice recognition issue: ${e.error}`); };
 
           recognition.onresult = (e) => {
             const resultText = e.results[0][0].transcript;
-            logEvent(`Transcribed text: "${resultText}"`);
             setTranscript(prev => {
               const updated = prev ? prev + ' ' + resultText : resultText;
               autoParseTranscript(updated);
@@ -240,76 +207,36 @@
         } catch (e) {
           setIsRecording(false);
           setError("Could not launch microphone module.");
-          logEvent(`Microphone Launch Exception: ${e.toString()}`);
         }
       };
 
       const handleImageCapture = (e) => {
         const file = e.target.files[0];
-        
-        if (!file) {
-          logEvent("Camera closure caught with zero file payload.");
-          return;
-        }
+        if (!file) return;
 
-        logEvent(`Initiating file capture. File picked: "${file.name}" (${(file.size / 1024 / 1024).toFixed(2)} MB)`);
-        setIsImageLoading(true);
-        setError('');
-        setSuccessMessage('');
-
+        setIsLoading(true);
+        setSubmitStatus('Optimizing image quality...');
         const reader = new FileReader();
-        
-        reader.onerror = (err) => {
-          setError("Failed to read image file from your device. Please try taking the photo again.");
-          logEvent(`FileReader Failure: ${err.message}`);
-          setIsImageLoading(false);
-        };
-
         reader.onload = (event) => {
-          try {
-            logEvent("FileReader loaded successfully. Initializing Canvas compressor...");
-            const img = new Image();
+          const img = new Image();
+          img.onload = () => {
+            const canvas = document.createElement('canvas');
+            // Moderate size (500px) keeps quality clear on Drive while avoiding POST timeout errors
+            const MAX_WIDTH = 500; 
+            const scaleSize = MAX_WIDTH / img.width;
+            canvas.width = MAX_WIDTH;
+            canvas.height = img.height * scaleSize;
             
-            img.onerror = () => {
-              setError("Device failed to render the image. Ensure the image is a valid format.");
-              logEvent("Canvas image decode exception: Invalid binary source.");
-              setIsImageLoading(false);
-            };
-
-            img.onload = () => {
-              try {
-                const canvas = document.createElement('canvas');
-                const MAX_WIDTH = 500; 
-                const scaleSize = MAX_WIDTH / img.width;
-                canvas.width = MAX_WIDTH;
-                canvas.height = img.height * scaleSize;
-                
-                logEvent(`Scaling canvas to dimensions: ${canvas.width}x${canvas.height}`);
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                
-                const compressedBase64 = canvas.toDataURL('image/jpeg', 0.5);
-                
-                if (!compressedBase64 || compressedBase64.length < 100) {
-                  throw new Error("Generated base64 string empty or corrupted.");
-                }
-
-                logEvent(`Compression complete! Output size: ${(compressedBase64.length / 1024).toFixed(1)} KB base64 payload.`);
-                setPhotoBase64(compressedBase64);
-                setSuccessMessage("Photo Registered & Optimized successfully! ✅");
-                setIsImageLoading(false);
-              } catch (canvasErr) {
-                setError("Error compressing image layout: " + canvasErr.message);
-                logEvent(`Canvas Context Exception: ${canvasErr.message}`);
-                setIsImageLoading(false);
-              }
-            };
-            img.src = event.target.result;
-          } catch (readerErr) {
-            setError("Error processing image reader stream: " + readerErr.message);
-            logEvent(`Stream Exception: ${readerErr.message}`);
-            setIsImageLoading(false);
-          }
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            
+            // Highly optimized compression (50% quality JPEG)
+            const compressedBase64 = canvas.toDataURL('image/jpeg', 0.5);
+            setPhotoBase64(compressedBase64);
+            setIsLoading(false);
+            setSubmitStatus('');
+          };
+          img.src = event.target.result;
         };
         reader.readAsDataURL(file);
       };
@@ -318,49 +245,43 @@
         e.preventDefault();
         if (!selectedStudent || !selectedBadge) {
           setError('Please select both a student and a badge.');
-          logEvent("Submit aborted: Required parameters missing.");
           return;
         }
 
         setIsSubmitting(true);
         setError('');
-        setSuccessMessage('');
-        setSubmitStatus('Connecting to Google Web App...');
-        logEvent("Form validated. Assembling payload package...");
+        setSubmitStatus('Connecting to Google API...');
         
         const payload = {
           action: 'postEvidence',
           studentId: selectedStudent,
           badgeId: selectedBadge,
           voiceTranscript: transcript,
-          photoData: photoBase64 
+          photoData: photoBase64
         };
 
         try {
-          setSubmitStatus('Sending data package & uploading high-res file to Drive...');
-          logEvent(`Sending POST to API endpoint. Base64 payload size: ${photoBase64 ? photoBase64.length : 0} chars.`);
+          setSubmitStatus('Sending data & uploading file (please wait)...');
           const response = await fetch(scriptUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify(payload)
           });
           
-          setSubmitStatus('Awaiting Google Drive confirmation...');
+          setSubmitStatus('Waiting for confirmation from Google Drive...');
           const result = await response.json();
           if (result.status === 'success') {
-            logEvent("Submission verified! Sheets written, Drive document file generated successfully.");
             setSuccessMessage('Successfully logged! Row added and high-res image link created on Google Drive.');
             setSelectedStudent('');
             setSelectedBadge('');
             setTranscript('');
             setPhotoBase64('');
-            setTimeout(() => setSuccessMessage(''), 6000);
+            setTimeout(() => setSuccessMessage(''), 4000);
           } else {
             throw new Error(result.message);
           }
         } catch (err) {
-          setError('Failed to submit entry: ' + err.message);
-          logEvent(`API Upload Crash: ${err.message}`);
+          setError('Failed to submit entry: ' + err.message + ' (Make sure your Web App API deployment is authorized on your personal account).');
         } finally {
           setIsSubmitting(false);
           setSubmitStatus('');
@@ -399,11 +320,64 @@
             </div>
           </div>
         );
-      }
+  } catch (error) {
+    return createJsonResponse({ status: 'error', message: error.toString() });
+  }
+}
+
+function getScriptUrl() {
+  return ScriptApp.getService().getUrl();
+}
+
+function doPost(e) {
+  try {
+    const payload = JSON.parse(e.postData.contents);
+    const action = payload.action;
+
+    if (action === 'postEvidence') {
+      const result = postEvidence(
+        payload.studentId, 
+        payload.badgeId, 
+        payload.voiceTranscript, 
+        payload.photoData // Receive image base64
+      );
+      return createJsonResponse({ status: 'success', data: result });
+    } else {
+      return createJsonResponse({ status: 'error', message: 'Invalid or missing action.' });
+    }
+  } catch (error) {
+    return createJsonResponse({ status: 'error', message: error.toString() });
+  }
+}
+
+function getStudents() { return getSheetDataAsObjects(SHEET_STUDENTS); }
+function getBadges() { return getSheetDataAsObjects(SHEET_BADGES); }
+
+/**
+ * Appends data to sheet, saves image data to Google Drive, and links it.
+ */
+function postEvidence(studentId, badgeId, voiceTranscript, photoData) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEET_EVIDENCE);
+  if (!sheet) throw new Error("The tab named '" + SHEET_EVIDENCE + "' was not found.");
+
+  const timestamp = new Date().toISOString();
+  const evidenceId = Utilities.getUuid();
+  let finalPhotoLink = "";
+
+  // If a photo was taken, save it to Google Drive and get the link
+  if (photoData && (photoData.indexOf("data:image") !== -1 || photoData.length > 100)) {
+    try {
+      // Find or create folder
+      let folder;
+      const folders = DriveApp.getFoldersByName("Lab Tracker Evidence");
+      if (folders.hasNext()) {
+        folder = folders.next();
+      } else {
+        folder = DriveApp.createFolder("Lab Tracker Evidence");
+}
 
       return (
-        <div className="min-h-screen pb-32 relative">
-
+        <div className="min-h-screen pb-20">
           <header className="bg-blue-600 text-white p-4 shadow-md flex justify-between items-center sticky top-0 z-10">
             <h1 className="text-xl font-bold flex items-center gap-2">
               <Icon name="award" size={24} /> Lab Tracker
@@ -421,14 +395,34 @@
 
           <main className="max-w-lg mx-auto p-4 space-y-6 mt-2">
             
-            {/* FLOATING TOP TOAST NOTIFICATIONS FOR SMART VOICE AUTO-SELECT */}
-            {autoSelectAlert && (
-              <div className="bg-indigo-600 text-white p-4 rounded-xl shadow-lg flex items-start justify-between gap-3 animate-bounce">
-                <div className="flex items-start gap-2">
-                  <Icon name="sparkles" className="text-white mt-0.5 flex-shrink-0" />
-                  <div className="text-sm font-bold leading-tight">{autoSelectAlert}</div>
+            {error && (
+              <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-md text-red-700 flex items-start gap-2">
+                <Icon name="alert-circle" className="text-red-500 mt-0.5" />
+                <div className="text-sm">
+                  <p className="font-bold">Error Occurred</p>
+                  <p className="font-medium">{error}</p>
                 </div>
-                <button onClick={() => setAutoSelectAlert('')} className="text-white hover:text-indigo-200 p-0.5"><Icon name="x" size={18} /></button>
+              </div>
+            )}
+            
+            {successMessage && (
+              <div className="bg-green-50 border-l-4 border-green-500 p-4 rounded-md text-green-700 flex items-center gap-2">
+                <Icon name="check-circle-2" className="text-green-500" />
+                <p className="text-sm font-semibold">{successMessage}</p>
+              </div>
+            )}
+
+            {submitStatus && (
+              <div className="bg-blue-50 border-l-4 border-blue-500 p-4 rounded-md text-blue-700 flex items-center gap-2">
+                <Icon name="refresh-cw" className="animate-spin text-blue-500" />
+                <p className="text-sm font-semibold">{submitStatus}</p>
+              </div>
+            )}
+
+            {autoSelectAlert && (
+              <div className="bg-indigo-50 border-l-4 border-indigo-500 p-4 rounded-md text-indigo-700 flex items-center gap-2 animate-bounce">
+                <Icon name="sparkles" className="text-indigo-500" />
+                <p className="text-sm font-bold">{autoSelectAlert}</p>
               </div>
             )}
 
@@ -458,6 +452,9 @@
                     ))}
                   </select>
                 </div>
+      // Convert the Base64 Data URI into a file
+      let contentType = "image/jpeg";
+      let base64String = photoData;
 
                 {/* Badge Selector */}
                 <div className="space-y-2">
@@ -501,36 +498,16 @@
                     className="w-full bg-white border border-slate-300 rounded-xl p-3 outline-none shadow-sm focus:ring-2 focus:ring-blue-500"
                   ></textarea>
                 </div>
-
-                {/* VOICE TROUBLESHOOTER HELP PANEL */}
-                {showVoiceTroubleshooter && (
-                  <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 space-y-3">
-                    <div className="flex items-center gap-2 text-amber-800 font-bold text-sm">
-                      <Icon name="help-circle" />
-                      <span>How to Unblock Voice Recognition on Android:</span>
-                    </div>
-                    <ol className="list-decimal list-inside text-xs text-amber-700 space-y-1.5 font-medium leading-relaxed">
-                      <li>Tap the <strong>tune/settings icon</strong> (left of the website URL in the address bar).</li>
-                      <li>Select <strong>Permissions</strong> or <strong>Site Settings</strong>.</li>
-                      <li>Find <strong>Microphone</strong> and toggle it to <strong>Allow</strong>.</li>
-                      <li>Refresh this browser page and tap <strong>Dictate</strong> again!</li>
-                    </ol>
-                    <p className="text-[10px] text-slate-500">
-                      * If you opened this link from inside another app (like Gmail or Discord), tap the 3-dots icon at the top-right and select <strong>"Open in Chrome"</strong> first.
-                    </p>
-                  </div>
-                )}
+      if (photoData.indexOf(",") !== -1) {
+        const splitData = photoData.split(",");
+        contentType = splitData[0].match(/:(.*?);/)[1];
+        base64String = splitData[1];
+      }
 
                 {/* Photo Element */}
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-slate-700">Photographic Evidence</label>
-                  
-                  {isImageLoading ? (
-                    <div className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-blue-300 rounded-xl bg-blue-50">
-                      <Icon name="refresh-cw" className="animate-spin text-blue-600 mb-2" size={24} />
-                      <span className="text-sm font-medium text-blue-600 animate-pulse">Optimizing image and registering file...</span>
-                    </div>
-                  ) : !photoBase64 ? (
+                  {!photoBase64 ? (
                     <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-xl bg-white hover:bg-slate-50 cursor-pointer">
                       <div className="flex flex-col items-center space-y-2 text-slate-400">
                         <Icon name="camera" size={32} />
@@ -541,67 +518,27 @@
                         accept="image/*" 
                         capture="environment" 
                         onChange={handleImageCapture} 
-                        onClick={() => { 
-                          isCameraActiveRef.current = true; // Flag system intent triggered
-                          logEvent("Camera click event logged. Waiting for intent feedback loop...");
-                        }}
                         className="hidden" 
                       />
                     </label>
                   ) : (
-                    <div className="space-y-3">
-                      <div className="bg-green-100 border border-green-300 text-green-800 text-sm font-bold px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm animate-pulse">
-                        <Icon name="check-circle" className="text-green-600" />
-                        <span>Photo Registered & Optimized successfully! ✅</span>
-                      </div>
-                      <div className="relative rounded-xl overflow-hidden shadow-md border">
-                        <img src={photoBase64} alt="Preview" className="w-full h-auto object-cover" />
-                        <button 
-                          type="button" 
-                          onClick={() => { 
-                            setPhotoBase64(''); 
-                            logEvent("Flushed existing photo instance.");
-                          }} 
-                          className="absolute top-2 right-2 bg-slate-900/80 text-white px-3 py-1 rounded-full text-sm font-semibold backdrop-blur-sm"
-                        >
-                          Retake
-                        </button>
-                      </div>
+                    <div className="relative rounded-xl overflow-hidden shadow-md border">
+                      <img src={photoBase64} alt="Preview" className="w-full h-auto object-cover" />
+                      <button 
+                        type="button" 
+                        onClick={() => setPhotoBase64('')} 
+                        className="absolute top-2 right-2 bg-slate-900/80 text-white px-3 py-1 rounded-full text-sm font-semibold backdrop-blur-sm"
+                      >
+                        Retake
+                      </button>
                     </div>
                   )}
                 </div>
-
-                {/* SOLID INLINE INSTRUCTIONS / NOTIFICATIONS */}
-                <div className="space-y-3">
-                  {error && (
-                    <div className="bg-red-50 border-2 border-red-500 rounded-xl p-4 text-red-800 flex items-start gap-3 shadow-md">
-                      <Icon name="alert-circle" className="text-red-600 mt-0.5 flex-shrink-0" />
-                      <div className="text-sm font-semibold">
-                        <p className="font-bold">Device Notification:</p>
-                        <p>{error}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {successMessage && (
-                    <div className="bg-green-50 border-2 border-green-500 rounded-xl p-4 text-green-800 flex items-start gap-3 shadow-md">
-                      <Icon name="check-circle-2" className="text-green-600 mt-0.5 flex-shrink-0" />
-                      <div className="text-sm font-semibold">
-                        <p className="font-bold">Transaction Success:</p>
-                        <p>{successMessage}</p>
-                      </div>
-                    </div>
-                  )}
-
-                  {submitStatus && (
-                    <div className="bg-blue-50 border-2 border-blue-500 rounded-xl p-4 text-blue-800 flex items-start gap-3 shadow-md animate-pulse">
-                      <Icon name="refresh-cw" className="animate-spin text-blue-500 mt-0.5 flex-shrink-0" />
-                      <div className="text-sm font-bold">
-                        <p>{submitStatus}</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
+      const bytes = Utilities.base64Decode(base64String);
+      const cleanStudentId = studentId ? studentId.replace(/[^a-zA-Z0-9]/g, "_") : "Unknown";
+      const cleanBadgeId = badgeId ? badgeId.replace(/[^a-zA-Z0-9]/g, "_") : "Unknown";
+      const fileName = cleanStudentId + "-" + cleanBadgeId + "-" + Date.now() + ".jpg";
+      const blob = Utilities.newBlob(bytes, contentType, fileName);
 
                 {/* Submission CTA */}
                 <button 
@@ -626,43 +563,52 @@
               </form>
             )}
           </main>
-
-          {/* DIAGNOSTIC CONSOLE FOR LAB DAYS */}
-          <div className="fixed bottom-0 left-0 right-0 bg-slate-950 border-t border-slate-800 text-slate-300 z-40 shadow-inner">
-            <button 
-              onClick={() => setShowConsole(!showConsole)} 
-              className="w-full p-2.5 flex items-center justify-between text-xs font-mono bg-slate-900 border-b border-slate-800 text-blue-400 hover:bg-slate-800 transition"
-            >
-              <span className="flex items-center gap-1.5">
-                <Icon name="terminal" size={14} /> SYSTEM EVENTS (DIAGNOSTIC LOGGER)
-              </span>
-              <span className="font-bold flex items-center gap-1 text-[10px] bg-slate-800 px-2 py-0.5 rounded-full text-slate-400">
-                {showConsole ? "HIDE CONSOLE ▲" : "SHOW LOGS ▼"}
-              </span>
-            </button>
-            {showConsole && (
-              <div className="h-44 overflow-y-auto p-3 font-mono text-[10px] leading-relaxed space-y-1">
-                {logs.length === 0 ? (
-                  <p className="text-slate-500 italic">No events logged yet. Try dictating or taking a photo!</p>
-                ) : (
-                  logs.map((log, index) => {
-                    let color = "text-slate-400";
-                    if (log.includes("Error") || log.includes("Exception") || log.includes("failed")) color = "text-red-400";
-                    else if (log.includes("successfully") || log.includes("verified") || log.includes("complete") || log.includes("Registered")) color = "text-green-400";
-                    else if (log.includes("Auto-selected") || log.includes("Match")) color = "text-indigo-400";
-                    return <p key={index} className={color}>{log}</p>;
-                  })
-                )}
-              </div>
-            )}
-          </div>
-          
         </div>
       );
-    }
+      // Save file and set it so anyone with the link can view it
+      const file = folder.createFile(blob);
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+      
+      finalPhotoLink = file.getUrl(); 
+    } catch (imageError) {
+      // Return error description in cell so we know exactly why Drive failed
+      finalPhotoLink = "Drive Upload Error: " + imageError.toString();
+}
 
     const root = ReactDOM.createRoot(document.getElementById('root'));
     root.render(<App />);
   </script>
 </body>
 </html>
+  } else {
+    finalPhotoLink = photoData ? "Photo Data Malformed or Empty" : "No Photo Attached";
+  }
+
+  // Appends: [ID, Timestamp, Student ID, Badge ID, Transcript, Clickable Photo Link]
+  sheet.appendRow([evidenceId, timestamp, studentId, badgeId, voiceTranscript, finalPhotoLink]);
+
+  return {
+    evidenceId: evidenceId,
+    timestamp: timestamp,
+    photoUrl: finalPhotoLink,
+    message: "Evidence successfully saved!"
+  };
+}
+
+function getSheetDataAsObjects(sheetName) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  if (!sheet) throw new Error("Tab '" + sheetName + "' not found.");
+  const data = sheet.getDataRange().getValues();
+  if (data.length <= 1) return [];
+  const headers = data[0];
+  const rows = data.slice(1);
+  return rows.map(row => {
+    let obj = {};
+    headers.forEach((header, index) => { obj[header] = row[index]; });
+    return obj;
+  });
+}
+
+function createJsonResponse(responseObject) {
+  return ContentService.createTextOutput(JSON.stringify(responseObject)).setMimeType(ContentService.MimeType.JSON);
+}
