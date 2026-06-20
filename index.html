@@ -16,9 +16,9 @@
 
   <div id="root"></div>
 
-  <script type="text/babel">
+  <script type="text/babel" data-type="module">
     const { useState, useEffect, useRef } = React;
-
+    
     // Fixed: Pure React SVG Icons. No DOM mutation, no external script dependencies, zero crashes.
     function Icon({ name, size = 20, className = "" }) {
       const paths = {
