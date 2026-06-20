@@ -31,6 +31,8 @@
       
       const [students, setStudents] = useState([]);
       const [badges, setBadges] = useState([]);
+      const [skills, setSkills] = useState([]);             // Holds dynamic configuration
+      const [skillScores, setSkillScores] = useState({});   // Holds values like { EQ: 2 }
       const [isLoading, setIsLoading] = useState(false);
       const [error, setError] = useState('');
 
@@ -41,7 +43,7 @@
       
       const [isRecording, setIsRecording] = useState(false);
       const [isSubmitting, setIsSubmitting] = useState(false);
-      const [submitStatus, setSubmitStatus] = useState(''); 
+      const [submitStatus, setSubmitStatus] = useState('');
       const [successMessage, setSuccessMessage] = useState('');
       const [autoSelectAlert, setAutoSelectAlert] = useState('');
 
@@ -66,19 +68,29 @@
         setIsLoading(true);
         setError('');
         try {
+          // Fetch Students
           const stuRes = await fetch(`${scriptUrl}?action=getStudents`);
           const stuData = await stuRes.json();
           if (stuData.status === 'success') {
-            setStudents(stuData.data.length > 0 ? stuData.data : [{ 'Name': 'Add Students to Sheet' }]);
+            setStudents(stuData.data);
           } else { throw new Error(stuData.message); }
 
+          // Fetch Badges / Context Tags
           const badgeRes = await fetch(`${scriptUrl}?action=getBadges`);
           const badgeData = await badgeRes.json();
           if (badgeData.status === 'success') {
-            setBadges(badgeData.data.length > 0 ? badgeData.data : [{ 'Badge Name': 'Add Badges to Sheet' }]);
+            setBadges(badgeData.data);
           } else { throw new Error(badgeData.message); }
+
+          // Fetch Skills Configuration
+          const skillRes = await fetch(`${scriptUrl}?action=getSkills`);
+          const skillData = await skillRes.json();
+          if (skillData.status === 'success') {
+            setSkills(skillData.data);
+          } else { throw new Error(skillData.message); }
+
         } catch (err) {
-          setError('Failed to download active lists. Please check your setup.');
+          setError('Failed to download initialization parameters.');
           console.error(err);
         } finally {
           setIsLoading(false);
@@ -93,39 +105,36 @@
         let matchedDetails = [];
 
         students.forEach(student => {
-          const sName = student.Name || student['Student Name'] || '';
-          if (!sName || sName.startsWith('Add Students')) return;
+          const sName = student.student_name || student.Name || student['Student Name'] || '';
+          const sId = student.student_id || sName;
+          if (!sName) return;
           const sNameLower = sName.toLowerCase();
           const firstName = sNameLower.split(' ')[0];
 
           if (lowercaseText.includes(sNameLower)) {
-            matchedStudent = sName;
+            matchedStudent = sId;
+            matchedDetails.push(sName);
           } else if (firstName && firstName.length > 2 && lowercaseText.includes(firstName)) {
-            matchedStudent = sName;
+            matchedStudent = sId;
+            matchedDetails.push(sName);
           }
         });
 
         badges.forEach(badge => {
-          const bName = badge['Badge Name'] || badge.Name || '';
-          if (!bName || bName.startsWith('Add Badges')) return;
+          const bName = badge.context_tag || badge['Badge Name'] || badge.Name || '';
+          if (!bName) return;
           const bNameLower = bName.toLowerCase();
           if (lowercaseText.includes(bNameLower)) {
             matchedBadge = bName;
-          } else {
-            const keywords = bNameLower.split(/[\s/]+/);
-            keywords.forEach(word => {
-              if (word.length > 4 && lowercaseText.includes(word)) {
-                matchedBadge = bName;
-              }
-            });
+            matchedDetails.push(bName);
           }
         });
 
-        if (matchedStudent) { setSelectedStudent(matchedStudent); matchedDetails.push(matchedStudent); }
-        if (matchedBadge) { setSelectedBadge(matchedBadge); matchedDetails.push(matchedBadge); }
+        if (matchedStudent) setSelectedStudent(matchedStudent);
+        if (matchedBadge) setSelectedBadge(matchedBadge);
 
         if (matchedDetails.length > 0) {
-          setAutoSelectAlert(`Voice Match Found! 🪄 Found: ${matchedDetails.join(' | ')}`);
+          setAutoSelectAlert(`Voice Match Found! 🪄 ${matchedDetails.join(' | ')}`);
           setTimeout(() => setAutoSelectAlert(''), 4500);
         }
       };
@@ -133,7 +142,7 @@
       const toggleRecording = () => {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         if (!SpeechRecognition) {
-          setError("Voice speech recognition is not supported in this browser profile.");
+          setError("Speech recognition is not supported in this browser profile.");
           return;
         }
 
@@ -152,8 +161,8 @@
           recognition.onstart = () => { setIsRecording(true); setError(''); };
           recognition.onend = () => setIsRecording(false);
           recognition.onerror = (e) => { 
-            setIsRecording(false); 
-            setError(`Voice recognition issue: ${e.error}. Check browser permissions.`); 
+            setIsRecording(false);
+            setError(`Voice recognition issue: ${e.error}`); 
           };
 
           recognition.onresult = (e) => {
@@ -176,9 +185,8 @@
       const handleImageCapture = (e) => {
         const file = e.target.files[0];
         if (!file) return;
-
         setIsLoading(true);
-        setSubmitStatus('Optimizing image quality...');
+        setSubmitStatus('Optimizing image density...');
         const reader = new FileReader();
         reader.onload = (event) => {
           const img = new Image();
@@ -188,7 +196,6 @@
             const scaleSize = MAX_WIDTH / img.width;
             canvas.width = MAX_WIDTH;
             canvas.height = img.height * scaleSize;
-            
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             
@@ -205,44 +212,44 @@
       const handleSubmit = async (e) => {
         e.preventDefault();
         if (!selectedStudent || !selectedBadge) {
-          setError('Please select both a student and a badge.');
+          setError('Please select both a student and a valid project context.');
           return;
         }
 
         setIsSubmitting(true);
         setError('');
-        setSubmitStatus('Connecting to Google API...');
+        setSubmitStatus('Connecting to API Gateway...');
         
         const payload = {
           action: 'postEvidence',
           studentId: selectedStudent,
           badgeId: selectedBadge,
           voiceTranscript: transcript,
-          photoData: photoBase64
+          photoData: photoBase64,
+          skillCredits: skillScores
         };
 
         try {
-          setSubmitStatus('Sending data & uploading file (please wait)...');
+          setSubmitStatus('Appending metrics to transaction ledger...');
           const response = await fetch(scriptUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify(payload)
           });
-          
-          setSubmitStatus('Waiting for confirmation from Google Drive...');
           const result = await response.json();
           if (result.status === 'success') {
-            setSuccessMessage('Successfully logged! Row added and high-res image link created on Google Drive.');
+            setSuccessMessage('Entry recorded successfully across ledger channels.');
             setSelectedStudent('');
             setSelectedBadge('');
             setTranscript('');
             setPhotoBase64('');
+            setSkillScores({});
             setTimeout(() => setSuccessMessage(''), 4000);
           } else {
             throw new Error(result.message);
           }
         } catch (err) {
-          setError('Failed to submit entry: ' + err.message);
+          setError('Failed to log transaction record: ' + err.message);
         } finally {
           setIsSubmitting(false);
           setSubmitStatus('');
@@ -254,7 +261,7 @@
           <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center p-6">
             <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 space-y-4">
               <div className="flex justify-center text-blue-600"><Icon name="settings" size={48} /></div>
-              <h1 className="text-xl font-bold text-center text-slate-800">Lab Tracker Configuration</h1>
+              <h1 className="text-xl font-bold text-center text-slate-800">Lab Tracker Link Setup</h1>
               <form 
                 onSubmit={(e) => {
                   e.preventDefault();
@@ -275,7 +282,7 @@
                   className="w-full px-4 py-3 border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-blue-500" 
                 />
                 <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 rounded-xl transition">
-                  Connect Web App API
+                  Connect Web App Endpoints
                 </button>
               </form>
             </div>
@@ -287,7 +294,7 @@
         <div className="min-h-screen pb-20">
           <header className="bg-blue-600 text-white p-4 shadow-md flex justify-between items-center sticky top-0 z-10">
             <h1 className="text-xl font-bold flex items-center gap-2">
-              <Icon name="award" size={24} /> Lab Tracker
+              <Icon name="award" size={24} /> Lab Tracker Ledger
             </h1>
             <button 
               onClick={() => { 
@@ -336,7 +343,7 @@
             {isLoading ? (
               <div className="flex flex-col items-center justify-center py-12 space-y-4 text-slate-500">
                 <Icon name="refresh-cw" className="animate-spin text-blue-600" size={32} />
-                <p className="text-sm font-medium">Loading details...</p>
+                <p className="text-sm font-medium">Downloading active datasets...</p>
               </div>
             ) : (
               <form onSubmit={handleSubmit} className="space-y-6">
@@ -352,32 +359,83 @@
                     className="w-full bg-white border border-slate-300 rounded-xl p-3 text-lg outline-none shadow-sm focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">-- Choose a student --</option>
-                    {students.map((s, i) => (
-                      <option key={i} value={s.Name || s['Student Name'] || JSON.stringify(s)}>
-                        {s.Name || s['Student Name'] || `Row ${i+1}`}
-                      </option>
-                    ))}
+                    {students.map((s, i) => {
+                      const idValue = s.student_id || s.Name || s['Student Name'] || i;
+                      const displayLabel = s.student_name || s.Name || s['Student Name'] || `Row ${i+1}`;
+                      return (
+                        <option key={i} value={idValue}>
+                          {displayLabel}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
 
-                {/* Badge Selector */}
+                {/* Badge/Context Selector */}
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
-                    <Icon name="award" size={16} /> <span>Select Skill/Badge</span>
+                    <Icon name="bookmark" size={16} /> <span>Project Context</span>
                   </label>
                   <select 
                     value={selectedBadge} 
                     onChange={(e) => setSelectedBadge(e.target.value)} 
                     className="w-full bg-white border border-slate-300 rounded-xl p-3 text-lg outline-none shadow-sm focus:ring-2 focus:ring-blue-500"
                   >
-                    <option value="">-- Choose a badge --</option>
-                    {badges.map((b, i) => (
-                      <option key={i} value={b['Badge Name'] || b.Name || JSON.stringify(b)}>
-                        {b['Badge Name'] || b.Name || `Row ${i+1}`}
-                      </option>
-                    ))}
+                    <option value="">-- Choose project focus --</option>
+                    {badges.map((b, i) => {
+                      const label = b.context_tag || b['Badge Name'] || b.Name || `Focus Row ${i+1}`;
+                      return (
+                        <option key={i} value={label}>
+                          {label}
+                        </option>
+                      );
+                    })}
                   </select>
                 </div>
+
+                {/* Dynamic Skills/Credits Assigner Grid */}
+                {skills.length > 0 && (
+                  <div className="space-y-2">
+                    <label className="text-sm font-bold text-slate-700 flex items-center gap-2">
+                      <Icon name="check-square" size={16} /> <span>Accredit Skills (Optional)</span>
+                    </label>
+                    <div className="space-y-2">
+                      {skills.map((skill, idx) => {
+                        const skillId = skill.skill_category || skill['Skill ID'] || `Skill_${idx}`;
+                        const skillName = skill.skill_name || skill['Skill Name'] || skillId;
+                        const currentVal = skillScores[skillId];
+                        
+                        return (
+                          <div key={idx} className="flex items-center justify-between bg-white border border-slate-200 p-3 rounded-xl shadow-sm">
+                            <div className="flex flex-col pr-2">
+                              <span className="font-semibold text-slate-700 text-sm leading-tight">{skillName}</span>
+                              <span className="text-xs font-mono text-slate-400 mt-0.5">{skillId}</span>
+                            </div>
+                            <div className="flex gap-1">
+                              {[1, 2, 3].map(score => (
+                                <button
+                                  key={score}
+                                  type="button"
+                                  onClick={() => setSkillScores(prev => ({
+                                    ...prev,
+                                    [skillId]: prev[skillId] === score ? null : score // Toggle off selection if clicked again
+                                  }))}
+                                  className={`w-9 h-9 rounded-lg font-bold transition flex items-center justify-center text-sm ${
+                                    currentVal === score 
+                                      ? 'bg-blue-600 text-white shadow-sm scale-105' 
+                                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                  }`}
+                                >
+                                  {score}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {/* Dictation Segment */}
                 <div className="space-y-2">
@@ -398,7 +456,7 @@
                     value={transcript} 
                     onChange={(e) => setTranscript(e.target.value)} 
                     placeholder="Type or dictate what you observed..." 
-                    rows="4" 
+                    rows="3" 
                     className="w-full bg-white border border-slate-300 rounded-xl p-3 outline-none shadow-sm focus:ring-2 focus:ring-blue-500"
                   ></textarea>
                 </div>
@@ -407,10 +465,10 @@
                 <div className="space-y-2">
                   <label className="text-sm font-bold text-slate-700">Photographic Evidence</label>
                   {!photoBase64 ? (
-                    <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-slate-300 rounded-xl bg-white hover:bg-slate-50 cursor-pointer">
-                      <div className="flex flex-col items-center space-y-2 text-slate-400">
-                        <Icon name="camera" size={32} />
-                        <span className="font-semibold text-sm">Tap to Snap Photo</span>
+                    <label className="flex flex-col items-center justify-center w-full h-28 border-2 border-dashed border-slate-300 rounded-xl bg-white hover:bg-slate-50 cursor-pointer">
+                      <div className="flex flex-col items-center space-y-1 text-slate-400">
+                        <Icon name="camera" size={28} />
+                        <span className="font-semibold text-xs">Tap to Snap Photo</span>
                       </div>
                       <input 
                         type="file" 
@@ -438,19 +496,19 @@
                 <button 
                   type="submit" 
                   disabled={isSubmitting} 
-                  className={`w-full flex items-center justify-center gap-2 text-white font-bold text-lg py-4 rounded-xl shadow-md transition active:scale-95 ${
+                  className={`w-full flex items-center justify-center gap-2 text-white font-bold text-lg py-3.5 rounded-xl shadow-md transition active:scale-95 ${
                     isSubmitting ? 'bg-slate-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'
                   }`}
                 >
                   {isSubmitting ? (
                     <>
-                      <Icon name="refresh-cw" className="animate-spin" size={24} />
-                      <span>Saving Evidence...</span>
+                      <Icon name="refresh-cw" className="animate-spin" size={22} />
+                      <span>Saving Evidence Ledger...</span>
                     </>
                   ) : (
                     <>
-                      <Icon name="send" size={24} />
-                      <span>Submit Evidence</span>
+                      <Icon name="send" size={22} />
+                      <span>Submit Record</span>
                     </>
                   )}
                 </button>
