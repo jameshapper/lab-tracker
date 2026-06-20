@@ -15,9 +15,7 @@
 <body class="bg-slate-50 font-sans antialiased select-none">
 
   <div id="root"></div>
-
-  <script type="text/babel">
-    /** @jsxRuntime classic */ // 2. THIS LINE IS CRUCIAL. It tells Babel to use global React instead of imports.
+  <script type="text/babel" data-presets="react" data-plugins="transform-react-jsx">
     
     const { useState, useEffect, useRef } = React;
 
