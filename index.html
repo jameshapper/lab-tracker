@@ -13,11 +13,19 @@
     body { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   </style>
 </head>
-<body class="bg-slate-50 font-sans antialiased select-none">
+<body>
 
   <div id="root"></div>
 
-  <script type="text/babel">
+  <script>
+    Babel.registerPreset('react-classic', {
+      presets: [
+        [Babel.availablePresets['react'], { "runtime": "classic" }]
+      ]
+    });
+  </script>
+
+  <script type="text/babel" data-presets="react-classic">
     const { useState, useEffect, useRef } = React;
 
     function Icon({ name, size = 20, className = "" }) {
